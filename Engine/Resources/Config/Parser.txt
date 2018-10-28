@@ -87,6 +87,7 @@ Table: Special Headings
 	argument -> parameters
 	args -> parameters
 	arg -> parameters
+	inputs -> parameters
 
 
 Table: Access Level

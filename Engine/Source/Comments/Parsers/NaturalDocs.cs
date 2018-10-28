@@ -388,6 +388,10 @@ namespace CodeClear.NaturalDocs.Engine.Comments.Parsers
 			
 			if (IsTopicLine(lineIterator, out currentTopic))
 				{
+				// NUCLEUS-SPECIFIC: Skip the function name line if this is the Nucleus specific format
+				while (currentTopic.CommentLineNumber != lineIterator.LineNumber)
+					{ lineIterator.Next(); }
+				// END-NUCLEUS-SPECIFIC
 				lineIterator.Next();
 				firstContentLine = lineIterator;
 				}
@@ -417,6 +421,11 @@ namespace CodeClear.NaturalDocs.Engine.Comments.Parsers
 				{
 				if (prevLineBlank && IsTopicLine(lineIterator, out nextTopic))
 					{
+					// NUCLEUS-SPECIFIC: Skip the function name line if this is the Nucleus specific format
+					while (nextTopic.CommentLineNumber != lineIterator.LineNumber)
+						{ lineIterator.Next(); }
+					// END-NUCLEUS-SPECIFIC
+
 					if (firstContentLine < lineIterator)
 						{  ParseBody(firstContentLine, lineIterator, currentTopic);  }
 						
@@ -765,11 +774,63 @@ namespace CodeClear.NaturalDocs.Engine.Comments.Parsers
 			TokenIterator colon;
 			
 			if (lineIterator.FindToken(":", false, LineBoundsMode.CommentContent, out colon) == false)
-				{  return false;  }
-				
-				
+				{
+				// NUCLEUS-SPECIFIC: any call-caps word on a line by itself may be a topic line
+				int nuLineStartingIndex, nuLineEndingIndex;
+				lineIterator.GetRawTextBounds(LineBoundsMode.CommentContent, out nuLineStartingIndex, out nuLineEndingIndex);
+
+				Tokenizer nuTokenizer = lineIterator.Tokenizer;
+				string nuKeywordsAndTags = nuTokenizer.RawText.Substring(nuLineStartingIndex, nuLineEndingIndex - nuLineStartingIndex);
+				nuKeywordsAndTags = nuKeywordsAndTags.CondenseWhitespace();
+
+				// Make sure the keyword is all-caps.
+				for (int w = 0; w < nuKeywordsAndTags.Length; w++)
+					{
+					if (Char.IsLetter(nuKeywordsAndTags[w]) && !Char.IsUpper(nuKeywordsAndTags[w]))
+						{ return false; }
+					}
+
+				// Parse out the keyword.  Modifiers are not supported for the Nucleus-specific format, so the keyword cannot
+				// be used with a modifier such as "Private".
+
+				bool nuPluralKeyword;
+				CommentTypes.CommentType nuCommentType = EngineInstance.CommentTypes.FromKeyword(nuKeywordsAndTags, out nuPluralKeyword);
+
+				if (nuCommentType == null)
+					{ return false; }
+
+				// Find the name of the topic.
+				for (;;)
+					{
+					if (lineIterator.Next() == false)
+						{ return false; }
+					else if (lineIterator.IsEmpty(LineBoundsMode.CommentContent))
+						{ continue; }
+					else
+						{ break; }
+					}
+				lineIterator.GetRawTextBounds(LineBoundsMode.CommentContent, out nuLineStartingIndex, out nuLineEndingIndex);
+				nuTokenizer = lineIterator.Tokenizer;
+				string nuTitle = nuTokenizer.RawText.Substring(nuLineStartingIndex, nuLineEndingIndex - nuLineStartingIndex);
+
+				// Return the new topic.
+				topic = new Topic(EngineInstance.CommentTypes);
+				topic.CommentLineNumber = lineIterator.LineNumber;
+				topic.Title = nuTitle;
+				topic.CommentTypeID = nuCommentType.ID;
+				topic.IsList = nuPluralKeyword;
+
+				topic.DeclaredAccessLevel = Languages.AccessLevel.Unknown;
+				topic.LanguageID = 0;
+
+				return true;
+
+				// END-NUCLEUS-SPECIFIC
+			}
+
+
 			// The colon must be followed by whitespace and at least one non-whitespace token.
-			
+
 			TokenIterator afterColon = colon;
 
 			afterColon.Next();
@@ -1293,6 +1354,9 @@ namespace CodeClear.NaturalDocs.Engine.Comments.Parsers
 			lineIterator.GetBounds(LineBoundsMode.CommentContent, out start, out end);
 			
 			bool definiteHeading = false;
+			// NUCLEUS-SPECIFIC: boolean to track whether this is a nucleus heading
+			bool nuNucleusHeading = false;
+			// END-NUCLEUS-SPECIFIC
 
 			heading = null;
 			headingType = HeadingType.Generic;
@@ -1304,7 +1368,20 @@ namespace CodeClear.NaturalDocs.Engine.Comments.Parsers
 			end.Previous();
 			
 			if (end.Character != ':')
-				{  return false;  }
+				{
+				// NUCLEUS-SPECIFIC: do not require colon if heading is in all-caps.
+				TokenIterator nuCheck = end;
+				while (nuCheck >= start)
+					{
+					if (Char.IsLetter(nuCheck.Character) && Char.IsLower(nuCheck.Character))
+						{ return false; }
+					nuCheck.Previous();
+					}
+				definiteHeading = true;
+				end.Next();
+				nuNucleusHeading = true;
+				// END-NUCLEUS-SPECIFIC
+				}
 
 			end.Previous();
 
@@ -1326,6 +1403,12 @@ namespace CodeClear.NaturalDocs.Engine.Comments.Parsers
 
 
 			heading = lineIterator.Tokenizer.TextBetween(start, end);
+			// NUCLEUS-SPECIFIC: Convert heading to title case if it is Nucleus specific
+			if (nuNucleusHeading && heading.Length > 1)
+				{
+				heading = Char.ToUpper(heading[0]) + heading.Substring(1).ToLower();
+				}
+			// END-NUCLEUS-SPECIFIC
 
 			if (tables[(int)TableIndex.SpecialHeadings].ContainsKey(heading))
 				{  headingType = (HeadingType)tables[(int)TableIndex.SpecialHeadings][heading];  }
